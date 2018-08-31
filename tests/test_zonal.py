@@ -242,7 +242,7 @@ def _assert_dict_eq(a, b):
 def test_ndarray():
     with rasterio.open(raster) as src:
         arr = src.read(1)
-        affine = src.affine
+        affine = src.transform
 
     polygons = os.path.join(DATA, 'polygons.shp')
     stats = zonal_stats(polygons, arr, affine=affine)
@@ -478,7 +478,7 @@ def test_some_nodata_ndarray():
     raster = os.path.join(DATA, 'slope_nodata.tif')
     with rasterio.open(raster) as src:
         arr = src.read(1)
-        affine = src.affine
+        affine = src.transform
 
     # without nodata
     stats = zonal_stats(polygons, arr, affine=affine, stats=['nodata', 'count', 'min'])
@@ -492,6 +492,67 @@ def test_some_nodata_ndarray():
     assert stats[0]['min'] >= 0.0
     assert stats[0]['nodata'] == 36
     assert stats[0]['count'] == 39
+
+
+def test_transform():
+    with rasterio.open(raster) as src:
+        arr = src.read(1)
+        affine = src.transform
+    polygons = os.path.join(DATA, 'polygons.shp')
+
+    stats = zonal_stats(polygons, arr, affine=affine)
+    stats2 = zonal_stats(polygons, arr, transform=affine.to_gdal())
+    assert stats == stats2
+    pytest.deprecated_call(zonal_stats, polygons, raster, transform=affine.to_gdal())
+
+
+def test_prefix():
+    polygons = os.path.join(DATA, 'polygons.shp')
+    stats = zonal_stats(polygons, raster, prefix="TEST")
+    for key in ['count', 'min', 'max', 'mean']:
+        assert key not in stats[0]
+    for key in ['TESTcount', 'TESTmin', 'TESTmax', 'TESTmean']:
+        assert key in stats[0]
+
+
+def test_geojson_out():
+    polygons = os.path.join(DATA, 'polygons.shp')
+    features = zonal_stats(polygons, raster, geojson_out=True)
+    for feature in features:
+        assert feature['type'] == 'Feature'
+        assert 'id' in feature['properties']  # from orig
+        assert 'count' in feature['properties']  # from zonal stats
+
+
+# do not think this is actually testing the line i wanted it to
+# since the read_features func for this data type is generating
+# the properties field
+def test_geojson_out_with_no_properties():
+    polygon = Polygon([[0, 0], [0, 0,5], [1, 1.5], [1.5, 2], [2, 2], [2, 0]])
+    arr = np.array([
+        [100, 1],
+        [100, 1]
+    ])
+    affine = Affine(1, 0, 0,
+                    0, -1, 2)
+
+    stats = zonal_stats(polygon, arr, affine=affine, geojson_out=True)
+    assert 'properties' in stats[0]
+    for key in ['count', 'min', 'max', 'mean']:
+        assert key in stats[0]['properties']
+
+    assert stats[0]['properties']['mean'] == 34
+
+
+# remove when copy_properties alias is removed
+def test_copy_properties_warn():
+    polygons = os.path.join(DATA, 'polygons.shp')
+    # run once to trigger any other unrelated deprecation warnings
+    # so the test does not catch them instead
+    stats_a = zonal_stats(polygons, raster)
+    with pytest.deprecated_call():
+        stats_b = zonal_stats(polygons, raster, copy_properties=True)
+    assert stats_a == stats_b
 
 
 def test_nan_counts():
